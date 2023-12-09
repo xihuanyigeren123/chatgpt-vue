@@ -11,20 +11,22 @@
         class="ml-auto px-3 py-2 text-sm cursor-pointer hover:bg-white rounded-md"
         @click="clickConfig()"
       >
-        设置
+        设置Key
       </div>
     </div>
 
     <div class="flex-1 mx-2 mt-20 mb-2" ref="chatListDom">
       <div
         class="group flex flex-col px-4 py-3 hover:bg-slate-100 rounded-lg"
-        v-for="item of messageList.filter((v) => v.role !== 'system')"
+        v-for="(item,i) of messageList.filter((v) => v.role !== 'system')" :key="i"
       >
         <div class="flex justify-between items-center mb-2">
+          <!-- 设置的别名 -->
           <div class="font-bold">{{ roleAlias[item.role] }}：</div>
           <Copy class="invisible group-hover:visible" :content="item.content" />
         </div>
-        <div>
+      <div>
+        <!-- 将Markdown 格式的文本解析为HTML -->
           <div
             class="prose text-sm text-slate-600 leading-relaxed"
             v-if="item.content"
@@ -40,6 +42,7 @@
         请输入 API Key：
       </div>
       <div class="flex">
+        <!-- 已经在对话不做发送 isTalking || sendOrSave()-->
         <input
           class="input"
           :type="isConfig ? 'password' : 'text'"
@@ -63,13 +66,13 @@ import cryptoJS from "crypto-js";
 import Loding from "@/components/Loding.vue";
 import Copy from "@/components/Copy.vue";
 import { md } from "@/libs/markdown";
-
-let apiKey = "";
-let isConfig = ref(true);
-let isTalking = ref(false);
-let messageContent = ref("");
-const chatListDom = ref<HTMLDivElement>();
-const decoder = new TextDecoder("utf-8");
+ 
+let apiKey = ""; // key
+let isConfig = ref(true); // isConfig key 默认需要配置key
+let isTalking = ref(false);// is a talk
+let messageContent = ref("");// input value
+const chatListDom = ref<HTMLDivElement>(); // contentList Dom
+const decoder = new TextDecoder("utf-8"); // 解码器
 const roleAlias = { user: "ME", assistant: "ChatGPT", system: "System" };
 const messageList = ref<ChatMessage[]>([
   {
@@ -90,6 +93,10 @@ const messageList = ref<ChatMessage[]>([
   },
 ]);
 
+/**
+ * 挂载之后检查key 是否存在 change input框状态
+ * 
+ */
 onMounted(() => {
   if (getAPIKey()) {
     switchConfigStatus();
@@ -99,38 +106,56 @@ onMounted(() => {
 const sendChatMessage = async (content: string = messageContent.value) => {
   try {
     isTalking.value = true;
+    // messageList 去掉页面显示的tip
     if (messageList.value.length === 2) {
       messageList.value.pop();
     }
+    // 为了联想 上下文 将所有msg push
     messageList.value.push({ role: "user", content });
     clearMessageContent();
+    // chat 回答占位
     messageList.value.push({ role: "assistant", content: "" });
-
+    // body.getReader() 是在可读流（ReadableStream）上调用的方法。
+    //可读流通常用于表示从某个数据源（比如网络请求、文件读取等）获取的数据流。
+    // Fetch API 返回的响应体就是一个可读流。
     const { body, status } = await chat(messageList.value, getAPIKey());
     if (body) {
       const reader = body.getReader();
+      // 处理reader 流
       await readStream(reader, status);
     }
   } catch (error: any) {
+    console.log(error,'error');
+    
     appendLastMessageContent(error);
+    
   } finally {
+    // 会话结束
     isTalking.value = false;
   }
 };
 
+
+/**
+ * 处理可读流 reader
+ * 
+ */
 const readStream = async (
   reader: ReadableStreamDefaultReader<Uint8Array>,
   status: number
 ) => {
+  // 部分line
   let partialLine = "";
-
+  // while true  持续从流中读取数据
   while (true) {
     // eslint-disable-next-line no-await-in-loop
+    // 通过 await 异步等待从流中读取的数据，其中 value 包含读取到的数据块，而 done 是一个布尔值，表示是否已经读取完毕。
+    // if (done) break;：如果已经读取完毕，退出循环。
     const { value, done } = await reader.read();
     if (done) break;
-
-    const decodedText = decoder.decode(value, { stream: true });
-
+   
+    const decodedText = decoder.decode(value, { stream: true }); // text string 
+    // 可能读取失败
     if (status !== 200) {
       const json = JSON.parse(decodedText); // start with "data: "
       const content = json.error.message ?? decodedText;
@@ -140,9 +165,11 @@ const readStream = async (
 
     const chunk = partialLine + decodedText;
     const newLines = chunk.split(/\r?\n/);
-
+    //  newLines 数组中取出最后一个元素，并将其赋值给变量 partialLine。
     partialLine = newLines.pop() ?? "";
-
+    // ['data: {"id":"chatcmpl-8TpUD0CS6K5vqrpOY5DTsWNigSgR…0,"delta":{"content":"愿"},"finish_reason":null}]}', '', 'data: {"id":"chatcmpl-8TpUD0CS6K5vqrpOY5DTsWNigSgR…0,"delta":{"content":"你"},"finish_reason":null}]}', '', 'data: {"id":"chatcmpl-8TpUD0CS6K5vqrpOY5DTsWNigSgR…0,"delta":{"content":"幸"},"finish_reason":null}]}', '']
+    console.log(newLines);
+    
     for (const line of newLines) {
       if (line.length === 0) continue; // ignore empty message
       if (line.startsWith(":")) continue; // ignore sse comment message
@@ -158,21 +185,41 @@ const readStream = async (
   }
 };
 
+/**
+ * 
+ * 
+ */
 const appendLastMessageContent = (content: string) =>
-  (messageList.value[messageList.value.length - 1].content += content);
+{
+   // 将之前展位 assitants 的content  替换为api 返回的内容
+  
+  return (messageList.value[messageList.value.length - 1].content += content);
+
+}
+
+/**
+ * 保存key 或者发送chat msg 
+ */
 
 const sendOrSave = () => {
+  // 输入的问题string length 为空 或者输入的key 
   if (!messageContent.value.length) return;
+  // 配置key isConfig = true
   if (isConfig.value) {
+    // 保存key 到 localstroage change isConfig
     if (saveAPIKey(messageContent.value.trim())) {
       switchConfigStatus();
     }
     clearMessageContent();
   } else {
+    // 不是配置key 发送 chat msg
     sendChatMessage();
   }
 };
 
+/**
+ * 设置key 
+ */
 const clickConfig = () => {
   if (!isConfig.value) {
     messageContent.value = getAPIKey();
@@ -182,26 +229,33 @@ const clickConfig = () => {
   switchConfigStatus();
 };
 
-const getSecretKey = () => "lianginx";
+const getSecretKey = () => "lsztest";
 
+/** 
+ * 保存key 到 localstorage
+ */ 
 const saveAPIKey = (apiKey: string) => {
+  // 校验key 
   if (apiKey.slice(0, 3) !== "sk-" || apiKey.length !== 51) {
     alert("API Key 错误，请检查后重新输入！");
     return false;
   }
+  // 加密存到浏览器
   const aesAPIKey = cryptoJS.AES.encrypt(apiKey, getSecretKey()).toString();
   localStorage.setItem("apiKey", aesAPIKey);
   return true;
 };
 
-const getAPIKey = () => {
-  if (apiKey) return apiKey;
-  const aesAPIKey = localStorage.getItem("apiKey") ?? "";
-  apiKey = cryptoJS.AES.decrypt(aesAPIKey, getSecretKey()).toString(
-    cryptoJS.enc.Utf8
-  );
-  return apiKey;
-};
+  const getAPIKey = () => {
+    if (apiKey) return apiKey;
+    // ?? 如果 localStorage.getItem("apiKey") 的结果为 null 或 undefined，则使用空字符串代替。
+    const aesAPIKey = localStorage.getItem("apiKey") ?? "";
+    // 解密
+    apiKey = cryptoJS.AES.decrypt(aesAPIKey, getSecretKey()).toString(
+      cryptoJS.enc.Utf8
+    );
+    return apiKey;
+  };
 
 const switchConfigStatus = () => (isConfig.value = !isConfig.value);
 
@@ -212,6 +266,9 @@ const scrollToBottom = () => {
   scrollTo(0, chatListDom.value.scrollHeight);
 };
 
+/**
+ * 检测watch messageList.value dom更新完成跳转到底部
+ */
 watch(messageList.value, () => nextTick(() => scrollToBottom()));
 </script>
 
